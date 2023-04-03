@@ -1,4 +1,4 @@
-name: sample-python
+name: nooindex-checker
 services:
 - environment_slug: python
   github:
