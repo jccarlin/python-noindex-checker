@@ -1,4 +1,4 @@
-name: nooindex-checker
+name: noindex-checker
 services:
 - environment_slug: python
   github:
@@ -6,3 +6,7 @@ services:
     deploy_on_push: true
     repo: digitalocean/sample-python
   name: sample-python
+  build:
+      # Add the following two lines
+      env:
+        PIP_REQUIREMENTS: requirements.txt
