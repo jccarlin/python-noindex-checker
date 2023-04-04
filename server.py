@@ -1,53 +1,53 @@
 import os
+import pyppeteer
+import asyncio
 from flask import Flask, request, jsonify
-from selenium import webdriver
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.common.exceptions import WebDriverException
-from scraper_api import ScraperAPIClient
+
+browserless_api_key = os.getenv('BROWSERLESS_API_KEY')
+print(browserless_api_key)
 
 app = Flask(__name__)
 
-@app.route('/')
+@app.route('/check_noindex')
 def check_noindex():
     url = request.args.get('url')
+    if not url:
+        return jsonify(error='Missing "url" parameter'), 400
 
-    # Initialize Chrome browser with Scraper API options
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')
-    client = ScraperAPIClient(os.environ.get('SCRAPER_API_KEY'))
-    client_params = {'url': url, 'render': 'true'}
-    print(client," ",client_params)
-    if client:
-        response = client.get(client_params)
-        if response.status_code == 200:
-            html = response.content
-            driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
-            driver.get('data:text/html;charset=utf-8,' + html)
+    async def run_check():
+        browser = await pyppeteer.launcher.connect(
+            browserWSEndpoint='wss://chrome.browserless.io?token='+browserless_api_key
+        )
+        page = await browser.newPage()
+        await page.goto(url)
+        try:
+            # Get the meta robots value
+            meta_robots = await page.evaluate('''() => {
+                const tag = document.querySelector('meta[name="robots"]');
+                return tag ? tag.getAttribute("content") : null;
+            }''')
+            # Get the response status code
+            await page.waitForNavigation({'waitUntil': 'domcontentloaded'})
+            response = await page.goto(url)
+            status_code = response.status
+        except pyppeteer.errors.NetworkError as e:
+            # Handle the NetworkError error here
+            print(e)  # print the exception message
+            await browser.close()
+            return {'error': str(e)}
+        finally:
+            # Close the Pyppeteer browser
+            await browser.close()
+
+        # Return the result in a dictionary format, including the error message if any
+        if meta_robots is not None:
+            return {'noindex': meta_robots, 'status_code': status_code}
         else:
-            return jsonify({'error': f'Request failed with status code {response.status_code}'})
-    else:
-        driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
-        driver.get(url)
+            return {'error': 'Unable to find the meta robots tag'}
 
-    try:
-        # Get the meta robots value
-        meta_robots = driver.execute_script('return document.querySelector("meta[name=\'robots\']")?.getAttribute("content")')
-
-        # Get the response status code
-        status_code = driver.execute_script('return window.performance.getEntriesByType("navigation")[0]?.response?.status || null')
-    except WebDriverException as e:
-        # Handle the WebDriverException error here
-        driver.quit()
-        return jsonify({'error': str(e)})
-    finally:
-        # Quit the Chrome browser
-        driver.quit()
-
-    # Return the result in JSON format, including the error message if any
-    if meta_robots is not None:
-        return jsonify({'noindex': meta_robots, 'status_code': status_code})
-    else:
-        return jsonify({'error': 'Unable to find the meta robots tag'})
+    loop = asyncio.new_event_loop()
+    result = loop.run_until_complete(run_check())
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run()
